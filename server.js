@@ -1,77 +1,45 @@
-require('dotenv').config(); // Load environment variables
 
-const express = require('express');
-const mongoose = require('mongoose');
-const bodyParser = require('body-parser');
-const crypto = require('crypto');
-const cors = require('cors');
+require("dotenv").config();
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const bodyParser = require("body-parser");
 
 const app = express();
+app.use(cors());
+app.use(bodyParser.json());
+
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
-const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET;
-
-if (!MONGO_URI) {
-    console.error("❌ MongoDB connection string is missing!");
-    process.exit(1);
-}
 
 // ✅ Connect to MongoDB
 mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
     .then(() => console.log("✅ MongoDB Connected"))
-    .catch(err => {
-        console.error("❌ MongoDB Connection Error:", err);
-        process.exit(1);
-    });
+    .catch(err => console.log("❌ MongoDB Connection Error:", err));
 
-// ✅ Define Mongoose Schema and Model
-const balanceSchema = new mongoose.Schema({
-    amount: { type: Number, default: 0 }
-});
-const Balance = mongoose.model('hanu', balanceSchema);
+// ✅ Create a Balance Schema
+const balanceSchema = new mongoose.Schema({ balance: { type: Number, default: 0 } });
+const BalanceModel = mongoose.model("Balance", balanceSchema);
 
-// ✅ Middleware
-app.use(cors());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: false }));
-
-// ✅ API to Get Balance
-app.get('/balance', async (req, res) => {
-    try {
-        const balanceDoc = await Balance.findOne();
-        res.json({ balance: balanceDoc ? balanceDoc.amount : 0 });
-    } catch (err) {
-        res.status(500).json({ error: "Error fetching balance" });
-    }
+// ✅ Fetch balance API
+app.get("/balance", async (req, res) => {
+    const balanceDoc = await BalanceModel.findOne({});
+    res.json({ balance: balanceDoc ? balanceDoc.balance : 0 });
 });
 
-// ✅ Razorpay Webhook Endpoint
-app.post('/webhook', async (req, res) => {
-    const secret = RAZORPAY_WEBHOOK_SECRET;
-    const signature = req.headers['x-razorpay-signature'];
-    const shasum = crypto.createHmac('sha256', secret).update(JSON.stringify(req.body)).digest('hex');
+// ✅ Razorpay Webhook (Update Balance)
+app.post("/razorpay-webhook", express.json(), async (req, res) => {
+    const payment = req.body;
 
-    if (shasum !== signature) {
-        return res.status(400).json({ error: "Invalid signature" });
+    if (payment.event === "payment.captured") {
+        const amount = payment.payload.payment.entity.amount / 100; // Convert from paise to ₹
+
+        await BalanceModel.findOneAndUpdate({}, { $inc: { balance: amount } }, { upsert: true });
+        console.log("✅ Payment received: ₹", amount);
     }
 
-    if (req.body.event === "payment.captured") {
-        try {
-            let balanceDoc = await Balance.findOne();
-            if (!balanceDoc) {
-                balanceDoc = new Balance({ amount: 0 });
-            }
-            balanceDoc.amount += 1; // ✅ Increase balance by 1 Rupee
-            await balanceDoc.save();
-            console.log("✅ Balance Updated:", balanceDoc.amount);
-        } catch (err) {
-            console.error("❌ Error updating balance:", err);
-        }
-    }
-    res.json({ status: "ok" });
+    res.status(200).send("Webhook received");
 });
 
-// ✅ Start Server
-app.listen(PORT, () => {
-    console.log(`✅ Server running on port ${PORT}`);
-});
+// ✅ Start server
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
