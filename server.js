@@ -9,37 +9,36 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI;
-
-// ✅ Connect to MongoDB
-mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+// ✅ Connect MongoDB
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
     .then(() => console.log("✅ MongoDB Connected"))
-    .catch(err => console.log("❌ MongoDB Connection Error:", err));
+    .catch(err => console.error("❌ MongoDB Connection Error:", err));
 
-// ✅ Create a Balance Schema
-const balanceSchema = new mongoose.Schema({ balance: { type: Number, default: 0 } });
-const BalanceModel = mongoose.model("Balance", balanceSchema);
+// ✅ Database Model
+const Payment = mongoose.model("Payment", new mongoose.Schema({ amount: Number }));
 
-// ✅ Fetch balance API
+// ✅ API: Get Total Balance
 app.get("/balance", async (req, res) => {
-    const balanceDoc = await BalanceModel.findOne({});
-    res.json({ balance: balanceDoc ? balanceDoc.balance : 0 });
-});
-
-// ✅ Razorpay Webhook (Update Balance)
-app.post("/razorpay-webhook", express.json(), async (req, res) => {
-    const payment = req.body;
-
-    if (payment.event === "payment.captured") {
-        const amount = payment.payload.payment.entity.amount / 100; // Convert from paise to ₹
-
-        await BalanceModel.findOneAndUpdate({}, { $inc: { balance: amount } }, { upsert: true });
-        console.log("✅ Payment received: ₹", amount);
+    try {
+        let payments = await Payment.find();
+        let total = payments.reduce((sum, p) => sum + p.amount, 0);
+        res.json({ balance: total });
+    } catch (err) {
+        console.error("Error fetching balance:", err);
+        res.status(500).json({ error: "Internal Server Error" });
     }
-
-    res.status(200).send("Webhook received");
 });
 
-// ✅ Start server
+// ✅ Razorpay Webhook (Handle Payments)
+app.post("/webhook", async (req, res) => {
+    const { event, payload } = req.body;
+    if (event === "payment.captured" && payload.payment.entity.amount === 100) {
+        await Payment.create({ amount: 1 });
+        console.log("✅ Payment Recorded: ₹1");
+    }
+    res.status(200).json({ success: true });
+});
+
+// ✅ Start Server
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
